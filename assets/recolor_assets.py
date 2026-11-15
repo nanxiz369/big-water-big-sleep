@@ -28,6 +28,7 @@
 需要： pip install pillow
 """
 
+import math
 import os
 from PIL import Image
 
@@ -36,8 +37,25 @@ BASE = os.path.join(HERE, "base.png")
 
 # 过渡宽度：像素与「该位置背景」的 L1 距离小于该值时开始被替换。
 # 太大 → 金属圈被拽向背景、轮廓发虚；太小 → 渐变和投影残留成灰边。
-# 32 是实测下来两头都还行的值（图片四角与卡片色完全贴合）。
-T_MAX = 32
+# 40 是实测下来两头都还行的值。
+T_MAX = 40
+
+# 舷窗外圈的柔光晕 —— 径向淡出的半径（相对素材宽度）。
+#
+# 为什么需要它：舷窗自带一圈很宽的冷调光晕。在原来的灰底画布上，
+# 这圈光晕和底色同色系，看不出来；但换成暖色卡片后，它就成了
+# 一块**冷色矩形**被硬生生切在图框边缘上 —— 又是「两个框」，
+# 只不过这次是「一个框 + 框里一块方块」。
+#
+# 光晕本身没法靠换色去掉（它离背景的距离超过了 T_MAX，
+# 会被当成「物体」保留），但可以**让它淡出**：
+# 给整张图加一层径向 alpha，中心（舷窗本体）不透明，
+# 外圈（光晕）平滑归零，光晕就自然溶进卡片，看不到边界。
+#
+# R_IN  之内完全不透明（舷窗本体 + 紧贴的金属圈）
+# R_OUT 之外完全透明（只剩卡片底色）
+HALO_R_IN = 0.34     # 中心实心区半径
+HALO_R_OUT = 0.60    # 完全淡出半径
 
 # 色调方案：名称 → 卡片底色
 TONES = {
@@ -108,14 +126,49 @@ def recolor(im, bg_new):
     return out
 
 
+def radial_alpha(im, r_in, r_out):
+    """给图加一层径向 alpha：中心实心，外圈平滑淡出。
+
+    舷窗自带一圈很宽的柔光晕。这圈光晕在灰底画布上和底色同色系，
+    看不出来；换成暖色卡片后它就变成一块冷色方块被硬切在图框边上。
+    换色治不了它（它离背景太远，会被当成物体保留），
+    但让它淡出就能彻底消除边界。
+
+    半径按图片宽度归一化，所以换尺寸也不用重调。
+    """
+    w, h = im.size
+    cx, cy = w / 2.0, h / 2.0
+    r_in_px = r_in * w
+    r_out_px = r_out * w
+    alpha = Image.new("L", (w, h), 0)
+    ap = alpha.load()
+    for y in range(h):
+        dy = y - cy
+        for x in range(w):
+            d = math.hypot(x - cx, dy)
+            if d <= r_in_px:
+                v = 255
+            elif d >= r_out_px:
+                v = 0
+            else:
+                t = (d - r_in_px) / float(r_out_px - r_in_px)
+                t = t * t * (3 - 2 * t)       # smoothstep
+                v = int(255 * (1 - t))
+            ap[x, y] = v
+    return alpha
+
+
 def main():
     base = Image.open(BASE)
     for tone, color in TONES.items():
         for (w, h) in SIZES:
-            img = recolor(base, color).resize((w, h), Image.LANCZOS)
+            img = recolor(base, color).convert("RGBA")
+            img.putalpha(radial_alpha(img, HALO_R_IN, HALO_R_OUT))
+            img = img.resize((w, h), Image.LANCZOS)
             path = os.path.join(HERE, "card_%s_%dx%d.png" % (tone, w, h))
             img.save(path)
-            print("card_%s_%dx%d.png  %s" % (tone, w, h, color))
+            print("card_%s_%dx%d.png  %s  (径向淡出 %.2f~%.2f)"
+                  % (tone, w, h, color, HALO_R_IN, HALO_R_OUT))
     print("✅ 共 %d 个素材" % (len(TONES) * len(SIZES)))
 
 

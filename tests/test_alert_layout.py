@@ -415,6 +415,38 @@ class TestSingleCardNoWhitePanel(unittest.TestCase):
             f"{hf.ALERT_IMG[1]}.png —— "
             "舷窗会用原素材，带一块灰底出来")
 
+    def test_porthole_asset_has_transparent_halo(self):
+        """卡片素材必须有透明的外圈光晕。
+
+        舷窗自带一圈很宽的冷调柔光晕。在灰底画布上它和底色同色系，
+        看不出来；换成暖色卡片后，它就变成一块冷色方块被硬切在
+        图框边缘上 —— 还是「两个框」，只是从「两块颜色」变成
+        「一个框里嵌一个方块」。
+
+        换色治不了它（光晕离背景太远，会被当成物体保留），
+        只能让它淡出。所以素材必须有 alpha 通道，且四角透明。
+        """
+        path = os.path.join(hf.ASSETS_DIR,
+                            "card_%s_%dx%d.png" % (hf.ALERT_TONE,
+                                                   hf.ALERT_IMG[0],
+                                                   hf.ALERT_IMG[1]))
+        self.assertTrue(os.path.exists(path),
+                        f"找不到卡片素材 {os.path.basename(path)}")
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow 未安装，跳过素材通道检查")
+        im = Image.open(path)
+        self.assertIn(
+            "A", im.mode,
+            f"卡片素材没有 alpha 通道（mode={im.mode}）—— "
+            "舷窗外圈的柔光晕会变成一块冷色方块")
+        alpha = im.convert("RGBA").getchannel("A")
+        lo, hi = alpha.getextrema()
+        self.assertEqual(lo, 0,
+                         "素材四角没有完全透明 —— 光晕边界仍然可见")
+        self.assertEqual(hi, 255, "素材中心不透明 —— 舷窗本体丢了")
+
     def test_title_font_is_not_bold(self):
         """标题不能用粗体。
 
