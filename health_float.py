@@ -68,7 +68,7 @@ BASE_DIR = _base_dir()
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 SOUND = "/System/Library/Sounds/Ping.aiff"
 
-VERSION = "1.2.3"
+VERSION = "1.2.4"
 
 
 def _log(msg):
@@ -228,12 +228,45 @@ def ui_font(size, bold=False):
 
 
 def round_rect(cv, x1, y1, x2, y2, r, **kw):
-    return cv.create_polygon(round_rect_pts(x1, y1, x2, y2, r), smooth=True, **kw)
+    """圆角矩形。
+
+    不用 smooth=True 的样条多边形 —— 样条会在直边上「鼓包」，
+    按钮顶边会变成一串小台阶（用户截图里看得一清二楚）。
+    改成用真实圆弧采样出的点集 + smooth=False：边缘是干净的直线，
+    圆角是真圆弧。
+    """
+    return cv.create_polygon(round_rect_pts(x1, y1, x2, y2, r),
+                             smooth=False, **kw)
+
+
+# 每个圆角用几个点采样。12 段是实测值：
+# 6 段时圆角看着像倒角，12 段起已经是干净的圆弧，
+# 再往上加也看不出区别（见 scripts/preview_rounding.py）。
+# 点数固定（4*12=48），这样 cv.coords() 换尺寸时不会因点数变化而错乱。
+ARC_STEPS = 12
 
 
 def round_rect_pts(x1, y1, x2, y2, r):
-    return [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
-            x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+    """圆角矩形的点集（顺时针，四角各一段圆弧）。
+
+    半径会被钳到短边的一半 —— 否则按钮先以 10x10 的尺寸创建
+    （r=8 > 5），圆弧会自交，画出一坨怪东西。
+    点数恒定，与 r 无关。
+    """
+    w, h = x2 - x1, y2 - y1
+    r = max(0.0, min(float(r), w / 2.0, h / 2.0))
+    pts = []
+    corners = [
+        (x2 - r, y1 + r, -90.0, 0.0),      # 右上
+        (x2 - r, y2 - r, 0.0, 90.0),       # 右下
+        (x1 + r, y2 - r, 90.0, 180.0),     # 左下
+        (x1 + r, y1 + r, 180.0, 270.0),    # 左上
+    ]
+    for cx, cy, a0, a1 in corners:
+        for i in range(ARC_STEPS + 1):
+            a = math.radians(a0 + (a1 - a0) * i / ARC_STEPS)
+            pts.extend((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return pts
 
 
 # key -> (标题, 副文案, icon, 自动关闭秒数, 黑屏时长类别)
@@ -287,8 +320,8 @@ STRIP_H = 48                 # 图下文字条高度（画布灰底，与图四�
 # 一块灰色矩形（又变回两个框）。换色脚本见 assets/recolor_assets.py：
 # 按「与底色的距离」平滑混合，近底色像素（含投影）换成新底色，
 # 离底色远的金属圈、云、叶片保持原样。
-ALERT_TONE = "warm"                 # 卡片色调：warm=暖做旧纸 / cool=冷调柔灰
-ALERT_CARD_BG = "#e9e5dc"           # 卡片底色（= assets/card_warm_*.png 的底色）
+ALERT_TONE = "cool"                 # 卡片色调：cool=冷调柔灰 / warm=暖做旧纸
+ALERT_CARD_BG = "#dde2e7"           # 卡片底色（= assets/card_cool_*.png 的底色）
 ALERT = (272, 208)                  # 提醒卡窗口：比之前的 302x236 更小
 ALERT_CARD = (10, 10, 262, 198)     # 卡片矩形（整张卡唯一的框）
 ALERT_CARD_R = 14                   # 卡片圆角
@@ -310,6 +343,46 @@ ALERT_SUB_LINE = 19          # 副标题行距
 ALERT_BTN_Y = 140            # 按钮中心
 ALERT_HINT_Y = 170           # 底部提示基线
 ALERT_BTN = (62, 23)         # 按钮尺寸
+
+# 齿轮半径（齿顶到中心）。4.7 → 外圈 9.4pt 直径、含齿整体 18pt。
+#
+# 为什么是 4.7：上一版 5.2 是外圈 10pt / 含齿整体 20pt，
+# 渲染出来是一个实心深色块，比「知道了」按钮还重 —— 像主按钮。
+# 用户连着说了两次「齿轮还要再小一些」「整体都缩小一些」。
+#
+# 但也不能一味往下缩：实测 r=4.2 渲染出来只剩一个小点，
+# 完全看不出是齿轮，「设置入口」就等于消失了。
+# 4.7 是这两者之间：明显轻了一档，还认得出是个齿轮。
+GEAR_R = 4.7
+
+# 齿轮的逻辑热区半径（pt）—— 不画任何东西，只用于点击/hover 判定。
+#
+# 为什么必须有它：视觉齿轮只有 9.4pt 直径，鼠标点不中。
+# 而 Tk 里 fill="" 的图元收不到点击（实测：点上去只触发
+# canvas 级绑定，tag 绑定完全不响），所以「画一个透明大圆
+# 垫在下面」这条常见做法在 Tk 里根本不成立。
+# 只能自己算距离。
+#
+# 11pt → 22pt 直径的判定圈，比可见齿轮大一圈半，
+# 鼠标停在齿轮附近的空白处也算命中 —— 小图标才点得中。
+GEAR_HIT_R = 11.0
+
+# hover 底板半径（pt）：略小于热区、明显大于可见齿轮。
+# 底板是「这里能点」的视觉提示，比热区小一圈，
+# 免得鼠标还没碰到齿轮就先亮起一个大灰圈。
+GEAR_BG_R = 10.0
+
+# 提醒卡里齿轮的位置（相对卡片左上角的绝对坐标）。
+# 放右上角：那是标题行的空白，跟标题同属信息区，
+# 不跟底部的倒计时文字抢位置。
+#
+# 坐标是算出来的，不是随手填的 —— 两个硬约束：
+#   1. 齿轮本体离卡片右边 / 上边各留 ~10pt，不能贴着卡片边；
+#   2. 热区（半径 11）不能碰到标题文字。
+#      标题 bbox 右边缘在 x=243、下边缘在 y=35，
+#      齿轮在 (248,24) 时热区圆的最下点在 y=33.8 < 35 ——
+#      差 1.2pt 分开，点标题右边缘不会误开设置面板。
+ALERT_GEAR_POS = (248, 24)
 
 
 # ---------------- 闹钟式拨轮控件 ----------------
@@ -602,7 +675,7 @@ class LegacySettingsDialog(tk.Toplevel):
 
         btns = tk.Frame(self, bg="#ffffff")
         btns.pack(pady=(14, 18))
-        ok = tk.Label(btns, text="保存 ✓", font=ui_font(11, True),
+        ok = tk.Label(btns, text="保存", font=ui_font(11, True),
                       bg=C_TEXT, fg=C_BTN_FG, cursor="hand2",
                       padx=18, pady=5)
         ok.pack(side="left", padx=6)
@@ -754,7 +827,7 @@ if HAVE_CTK:
                                    hover_color="#d3dae3", text_color=C_DIM,
                                    font=ui_font(12), command=self._reset)
             reset.pack(side="left", padx=6)
-            ok = ctk.CTkButton(btns, text="保存 ✓", width=104, height=34,
+            ok = ctk.CTkButton(btns, text="保存", width=104, height=34,
                                 corner_radius=10, fg_color=C_ACCENT,
                                 hover_color=C_ACCENT_HOVER, text_color=C_BTN_FG,
                                 font=ui_font(12, True), command=self._save)
@@ -817,6 +890,7 @@ class FloatApp:
         self.blackout = None
         self.black_left = 0
         self.settings_win = None
+        self._gear_hover_on = False     # 鼠标当前是否在齿轮热区里
         self._last_tick = None     # 上次 tick 时间（用于休眠唤醒检测）
         self.next_run = self._build_schedule()
         self.images = self._load_images()
@@ -852,13 +926,14 @@ class FloatApp:
         self.cv = tk.Canvas(root, width=self.w, height=self.h,
                             bg=C_CABIN, highlightthickness=0, takefocus=0)
         self.cv.pack(fill="both", expand=True)
-        self.cv.bind("<Button-1>", self._drag_start, add="+")
+        self.cv.bind("<Button-1>", self._on_canvas_click, add="+")
         self.cv.bind("<B1-Motion>", self._drag_move, add="+")
+        self.cv.bind("<Motion>", self._on_canvas_motion, add="+")
         self.cv.bind("<Double-Button-1>",
                      lambda e: self._open_settings(), add="+")
         self.cv.bind("<Button-3>", self._show_menu, add="+")
         self.cv.bind("<Enter>", lambda e: self._set_hover(True), add="+")
-        self.cv.bind("<Leave>", lambda e: self._set_hover(False), add="+")
+        self.cv.bind("<Leave>", lambda e: self._on_canvas_leave(e), add="+")
 
         self._create_items()
         self._layout()
@@ -1021,21 +1096,37 @@ class FloatApp:
         # 所以截图里那个按钮只剩一个空的小灰方块。
         self.a_btn_id = round_rect(cv, 0, 0, 10, 10, 8, fill=C_ACCENT,
                                    outline="", tags=("btn",))
-        self.a_btn_txt = cv.create_text(0, 0, text="知道了 ✓",
+        # 按钮文案不要带 ✓。
+        #
+        # U+2713 不在 PingFang SC 里，macOS 会回退到别的字体来渲染它 ——
+        # 实测回退出来的是**衬线斜体**的勾，和旁边黑体的「知道了」
+        # 完全是两套字体，看起来像贴上去的一个外来物。
+        # 而且按钮只有 62pt 宽，「知道了 ✓」已经 52pt，勾几乎顶到右边缘。
+        # 用户截图里就是这个样子：勾既突兀又挤。
+        # 干脆不要 —— 按钮本身就是「知道了」，不需要再打一个勾。
+        self.a_btn_txt = cv.create_text(0, 0, text="知道了",
                                         font=ui_font(10, True), fill=C_BTN_FG)
         self.a_hint_id = cv.create_text(0, 0, text="", font=ui_font(9),
                                         fill=C_DIM)
         cv.tag_bind("btn", "<Button-1>", lambda e: self._dismiss())
         cv.tag_bind("a_btn_txt", "<Button-1>", lambda e: self._dismiss())
-        # 齿轮：可见的设置入口，点了直接开面板
-        cv.tag_bind("gear", "<Button-1>", lambda e: self._open_settings())
-        # 齿轮底板平时隐藏，鼠标移到齿轮上才淡入 —— 平时灰条上只有一个
-        # 图标，不再挂着一个突兀的白色方框。
-        cv.tag_bind("gear", "<Enter>", lambda e: self._gear_hover(True))
-        cv.tag_bind("gear", "<Leave>", lambda e: self._gear_hover(False))
+        # 齿轮的点击和 hover 都不走 Tk 的 tag 绑定，统一用距离判定
+        # （见 _gear_hit / _on_canvas_click / _on_canvas_motion）。
+        #
+        # 两个原因：
+        #  1. Tk 里只有「有填充的图元」收得到点击，透明热区画不出来；
+        #  2. 齿轮是外圈 + 8 齿 + 中心孔共 10 个图元，同一 tag 的图元
+        #     之间移动会反复触发 Leave/Enter，底板会一闪一闪的。
+        #     距离判定没有这个问题 —— 只有一个真值。
 
     def _gear_hover(self, on):
-        """齿轮 hover：底板淡入 / 淡出，图标同步提亮。"""
+        """齿轮 hover：底板淡入 / 淡出，图标同步提亮。
+
+        on 的真值同时记进 _gear_hover_on，
+        这样距离判定（_on_canvas_motion）才知道状态有没有变，
+        不会每帧都重复设置 itemconfig。
+        """
+        self._gear_hover_on = bool(on)
         if not (self.gear_id and self.gear_bg):
             return
         try:
@@ -1065,19 +1156,25 @@ class FloatApp:
         所以孔的颜色要跟着场景变（见 _set_gear_hole）。
 
         尺寸经过实测校准：半径 6.8 的齿轮在旧卡片里过于抢眼
-        （像个主按钮）。卡片缩小后整体再收一档 ——
-        半径 5.2 是个「入口图标」的合适体量：
-        再小就点不中了（10.4pt 直径已接近可点下限）。
+        （像个主按钮），5.2 那版齿块又突出来占了一半整体，
+        用户连着两次说「还要再小一些」。现在是 4.2 ——
+        外圈 8pt、含齿 16pt，是个不抢戏的入口图标。
+
+        代价是「看得见」不等于「点得中」：8pt 的目标鼠标很难瞄准。
+        所以真正的点击判定不走 Tk 的 tag 命中（透明图元收不到点击），
+        而是在 _on_canvas_click 里用 GEAR_HIT_R 做距离判定。
         """
-        r = 5.2                      # 齿顶半径
+        r = GEAR_R                    # 齿顶半径
         ring = cv.create_oval(
             cx - r, cy - r, cx + r, cy + r,
             fill=C_GEAR, outline="", tags=("gear",))
         teeth = []
         for i in range(8):
             a = math.radians(i * 45)
-            tr = 6.9                  # 齿块外半径
-            tw = 1.9                  # 齿块半宽
+            # 齿块尺寸按外圈半径等比推导，这样改 GEAR_R 时
+            # 整个齿轮是缩放而不是「外圈变了、齿还是老尺寸」。
+            tr = r * 1.33              # 齿块外半径
+            tw = r * 0.37              # 齿块半宽
             tx, ty = cx + tr * math.cos(a), cy + tr * math.sin(a)
             # 每个齿是一个小方块，用旋转矩阵对齐到径向
             c, s = math.cos(a), math.sin(a)
@@ -1089,7 +1186,7 @@ class FloatApp:
             teeth.append(t)
         # 中心孔：用所在底色覆盖，画出「挖空」的观感
         hole = cv.create_oval(
-            cx - 1.9, cy - 1.9, cx + 1.9, cy + 1.9,
+            cx - r * 0.37, cy - r * 0.37, cx + r * 0.37, cy + r * 0.37,
             fill=C_CABIN, outline="", tags=("gear",))
         self.gear_extra = tuple(teeth) + (hole,)
         self.gear_hole_id = hole
@@ -1126,7 +1223,22 @@ class FloatApp:
         for iid in (self.gear_id,) + tuple(getattr(self, "gear_extra", ())):
             cv.move(iid, dx, dy)
         self.gear_center = (cx, cy)
-        cv.coords(self.gear_bg, cx - 14, cy - 14, cx + 14, cy + 14)
+        cv.coords(self.gear_bg, cx - GEAR_BG_R, cy - GEAR_BG_R,
+                  cx + GEAR_BG_R, cy + GEAR_BG_R)
+
+    def _gear_hit(self, x, y):
+        """点 (x, y) 是否落在齿轮的逻辑热区里。
+
+        为什么不用 Tk 的命中检测：
+        Tk 画布只有「有填充的图元」才收得到点击，
+        fill="" 的透明 oval 是死的（实测点它只触发 canvas 级绑定）。
+        所以齿轮缩小到 8pt 之后，必须自己算距离。
+
+        热区比可见齿轮大一圈半（12pt vs 8pt 外圈），
+        小图标才点得中 —— 8pt 的目标鼠标根本瞄不准。
+        """
+        cx, cy = self.gear_center
+        return (x - cx) ** 2 + (y - cy) ** 2 <= GEAR_HIT_R ** 2
 
     # ---------- 布局（固定尺寸） ----------
     def _layout(self):
@@ -1185,16 +1297,19 @@ class FloatApp:
         # 整张卡只有一个框：卡片底 + 里面的舷窗和文字。
         self._show(self.card_id)
         self._hide(self.time_id, self.name_id)
-        # 提醒卡状态下齿轮挪到卡片右下角，始终可点。
-        # 之前它和底部提示文字挤在同一行（都在 y≈202），直接叠在一起。
-        # 现在：齿轮在最右下，提示文字居中偏左，两者水平分离不打架。
+        # 提醒卡状态下齿轮挪到卡片右上角，始终可点。
+        #
+        # 为什么挪到右上：右下角那版（v1.2.3）齿轮和底部提示文字
+        # 「93 秒后自动消失」挤在同一行，看着像两个不相干的东西
+        # 硬塞在一起。右上角是「标题行」那一侧的空白，
+        # 齿轮是设置入口，跟标题同属「信息区」，位置关系更自然。
         #
         # 还要把齿轮提到 z-order 最顶层 —— 卡片底是先创建的（压在最下），
         # 但标题文字的 bbox 会伸到齿轮附近，齿轮必须压在所有文字之上。
         self._show(self.gear_id)
         for iid in getattr(self, "gear_extra", ()):
             self._show(iid)
-        self._move_gear(ALERT_CARD[2] - 15, ALERT_CARD[3] - 15)
+        self._move_gear(*ALERT_GEAR_POS)
         for iid in (self.gear_id,) + tuple(getattr(self, "gear_extra", ())):
             cv.tag_raise(iid)
         # 齿轮落在卡片上，中心孔要挖成卡片色
@@ -1631,6 +1746,48 @@ class FloatApp:
 
     def _set_hover(self, on):
         self.hover = on
+
+    # ---------- 齿轮命中（距离判定）----------
+    def _on_canvas_click(self, e):
+        """画布上的单击：先判齿轮，命中就开设置，否则走拖拽。
+
+        为什么不挂在 gear 的 tag 上：
+        Tk 画布只有「有填充的图元」才收得到点击，透明 oval 是死的。
+        齿轮缩到 8pt 之后，Tk 自己的命中范围就是那 8 个像素，
+        鼠标根本瞄不准 —— 所以命中判定改由几何距离来做，
+        见 _gear_hit。
+
+        返回 "break" 是为了不把这次点击继续当成拖拽起点：
+        点齿轮开设置，不该顺手把浮窗也拖走。
+        """
+        if self._gear_hit(e.x, e.y):
+            self._open_settings()
+            return "break"
+        self._drag_start(e)
+
+    def _on_canvas_motion(self, e):
+        """鼠标移动：判断是否在齿轮热区内，控制 hover 高亮。
+
+        齿轮只有 8pt，用 Tk 的 <Enter>/<Leave> 几乎触发不到
+        （鼠标要精确压在 8 个像素上），底板永远不会亮。
+        所以 hover 判定也走同一个距离热区，
+        让「能点到的范围」和「会亮起来的范围」保持一致。
+        """
+        over = self._gear_hit(e.x, e.y)
+        if over != self._gear_hover_on:
+            self._gear_hover_on = over
+            self._gear_hover(over)
+
+    def _on_canvas_leave(self, e):
+        """鼠标移出浮窗：关掉齿轮 hover，否则底板会一直亮着。
+
+        移出窗口后不会再有 <Motion> 事件，
+        所以必须在这里显式收掉 —— 否则鼠标一走开，
+        齿轮底板就永久停在「亮着」的状态。
+        """
+        self._set_hover(False)
+        self._gear_hover_on = False
+        self._gear_hover(False)
 
     def _drag_start(self, e):
         self.dx, self.dy = e.x, e.y

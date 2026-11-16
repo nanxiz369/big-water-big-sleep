@@ -24,6 +24,7 @@
 运行： python3 -m unittest discover -s tests
 """
 import os
+import re
 import sys
 import unittest
 
@@ -41,6 +42,14 @@ import tkinter.font  # noqa: E402
 
 import health_float as hf  # noqa: E402
 
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _read(rel_path):
+    """读仓库里的文本文件（相对仓库根）。"""
+    with open(os.path.join(ROOT_DIR, rel_path), "r", encoding="utf-8") as fh:
+        return fh.read()
+
 
 class TestAlertLayout(unittest.TestCase):
     """提醒卡排版：宽度、层级、按钮、齿轮"""
@@ -48,7 +57,21 @@ class TestAlertLayout(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.root = tk.Tk()
-        cls.root.withdraw()
+        # 窗口要「显示但全透明」，不能用 withdraw()。
+        #
+        # 为什么：Tk 的 event_generate 只会把事件投递给**已映射**
+        # 的 widget，withdraw() 掉的窗口收不到任何事件 ——
+        # 实测 withdraw() 之后连 <Motion> 都投不进来。
+        # 而这一组里有几条测试必须发真事件（点齿轮开设置），
+        # 用直接调函数的方式测就绕过了整套绑定，测不出「点不中」。
+        #
+        # alpha=0 让窗口完全看不见（测试时不会在屏幕上闪一个浮窗），
+        # 但它仍然是 mapped 的，事件照收不误。
+        cls.root.deiconify()
+        try:
+            cls.root.attributes("-alpha", 0.0)
+        except tk.TclError:
+            pass
         cls.cfg = hf.load_config()
         cls.app = hf.FloatApp(cls.root, cls.cfg)
 
@@ -60,6 +83,12 @@ class TestAlertLayout(unittest.TestCase):
             pass
 
     def setUp(self):
+        # 上一条用例可能把 _open_settings 换成打桩版本，
+        # 必须还原，否则后面的用例会跟着一起「假通过」。
+        if not hasattr(self.app, "_open_settings_real"):
+            self.app._open_settings_real = self.app._open_settings
+        else:
+            self.app._open_settings = self.app._open_settings_real
         self.app.current = "sleep"
         self.app.auto_left = 93
         self.app._resize_to(*hf.ALERT)
@@ -184,6 +213,34 @@ class TestAlertLayout(unittest.TestCase):
         self.assertGreaterEqual(tb[1], bb[1] - 2, "按钮文字跑到底板上边了")
         self.assertLessEqual(tb[3], bb[3] + 2, "按钮文字跑到底板下边了")
 
+    def test_button_text_has_no_checkmark(self):
+        """按钮文案里不能有勾。
+
+        U+2713 不在 PingFang SC 里，macOS 会回退到别的字体渲染它 ——
+        实测回退出来的是**衬线斜体**的勾，和旁边黑体的「知道了」
+        完全是两套字体，看着像贴上去的一个外来物。
+        用户截图里就是这么个东西，他还以为是什么东西挡住了按钮。
+
+        同理，「保存 ✓」在设置面板里也是一样的毛病。
+        """
+        cv = self.app.cv
+        text = cv.itemcget(self.app.a_btn_txt, "text")
+        for mark in ("✓", "✔", "√"):
+            self.assertNotIn(
+                mark, text,
+                f"按钮文案又带上了 {mark} —— 它在 PingFang 里没有字形，"
+                "会回退成衬线斜体，跟旁边的中文不是一套字体")
+
+        # 设置面板的两个按钮同样不能带
+        import re
+        src = _read("health_float.py")
+        for m in re.finditer(r'text="([^"]*)"', src):
+            label = m.group(1)
+            for mark in ("✓", "✔", "√"):
+                self.assertNotIn(
+                    mark, label,
+                    f"界面文案 {label!r} 里带了 {mark} —— 同样的字体回退问题")
+
     def test_button_size_is_stable_across_layouts(self):
         """反复 layout 后按钮尺寸不能变。
 
@@ -225,13 +282,109 @@ class TestAlertLayout(unittest.TestCase):
             self.assertGreater(bb[2] - bb[0], 0)
 
     def test_gear_is_visible_and_big_enough(self):
-        """齿轮必须可见，且有一定体量（太小等于看不见）"""
+        """齿轮必须可见，且有一定体量（太小等于看不见）。
+
+        下限 8pt：实测 r=4.2（外圈 8pt）渲染出来只剩一个小点，
+        完全看不出是齿轮，「设置入口」等于消失了。
+        现在的 4.7 是这条线上的安全值。
+        """
         cv = self.app.cv
         self.assertEqual(cv.itemcget(self.app.gear_id, "state"), "normal",
                          "齿轮不可见")
         bb = cv.bbox(self.app.gear_id)
-        self.assertGreaterEqual(bb[2] - bb[0], 10,
-                                "齿轮太小了（<10pt），实际看不见")
+        self.assertGreaterEqual(bb[2] - bb[0], 8,
+                                "齿轮太小了（<8pt），实际看不见")
+        # 含齿整体也不能小于 14pt —— 齿块是「这是个齿轮」的主要识别特征
+        xs, ys = [], []
+        for iid in (self.app.gear_id,) + tuple(self.app.gear_extra):
+            b = cv.bbox(iid)
+            xs += [b[0], b[2]]
+            ys += [b[1], b[3]]
+        self.assertGreaterEqual(max(xs) - min(xs), 14,
+                                "齿轮含齿整体太小了，已经认不出是齿轮")
+
+    def test_gear_stays_small(self):
+        """齿轮不能变大。
+
+        用户连着说了两次「齿轮还要再小一些」「整体都缩小一些」。
+        5.2 那版（外圈 10pt / 含齿 20pt）渲染出来是一个实心深色块，
+        比「知道了」按钮还重，像主按钮。
+
+        这条守的是「别改回去」：齿轮是整个界面里最容易被
+        「顺手调大一点」的元素，而变大之后用户一定会再投诉一次。
+        """
+        self.assertLessEqual(hf.GEAR_R, 5.0,
+                             "齿轮又变大了（半径 > 5.0）—— "
+                             "用户明确要求整体缩小")
+        bb = self.app.cv.bbox(self.app.gear_id)
+        self.assertLessEqual(bb[2] - bb[0], 11,
+                              "齿轮外圈又变大了（>11pt），会抢主体内容的戏")
+
+    def test_gear_hit_zone_is_bigger_than_the_gear(self):
+        """逻辑热区必须明显大于可见齿轮。
+
+        齿轮缩到 9.4pt 之后，鼠标根本瞄不准那 9 个像素。
+        点击判定靠 GEAR_HIT_R 的距离热区，所以热区必须比可见齿轮大，
+        否则「看得见」和「点得中」会脱节。
+
+        这条不能靠 Tk 的命中检测兜底：Tk 里 fill="" 的图元收不到点击，
+        透明热区画不出来，只能自己算距离。
+        """
+        self.assertGreater(hf.GEAR_HIT_R, hf.GEAR_R,
+                           "热区必须比可见齿轮大，否则小齿轮点不中")
+        # 至少要有一个 22pt 左右的判定圈，鼠标才好瞄
+        self.assertGreaterEqual(hf.GEAR_HIT_R * 2, 20,
+                                "热区直径太小了（<20pt），小图标很难点中")
+
+    def test_gear_hit_zone_does_not_swallow_title(self):
+        """热区不能碰到标题文字。
+
+        热区是看不见的圆形判定圈，半径 11pt 比可见齿轮大一圈半。
+        齿轮位置如果往左/往下挪一点，热区就会盖住标题的最后一个字 ——
+        用户点标题右边缘会误开设置面板，而且完全不知道发生了什么。
+
+        判据用「圆心到矩形的最短距离」，不是 bbox 粗相交：
+        热区圆和标题 bbox 的**矩形**相交是正常的（右上角擦边），
+        只有真的压到字上才算问题。
+        """
+        cv = self.app.cv
+        gx, gy = self.app.gear_center
+        hr = hf.GEAR_HIT_R
+        for label, iid in (("标题", self.app.a_title_id),
+                           ("标题emoji", self.app.a_icon_id),
+                           ("副标题", self.app.a_sub_id),
+                           ("按钮", self.app.a_btn_id),
+                           ("底部提示", self.app.a_hint_id)):
+            bb = cv.bbox(iid)
+            self.assertIsNotNone(bb, f"{label} 没有布局")
+            nx = min(max(gx, bb[0]), bb[2])
+            ny = min(max(gy, bb[1]), bb[3])
+            dist2 = (gx - nx) ** 2 + (gy - ny) ** 2
+            self.assertGreater(
+                dist2, hr * hr,
+                f"{label} 落进了齿轮热区里 —— 点它会误开设置面板: "
+                f"gear=({gx},{gy}) r={hr} {label}={bb}")
+
+    def test_gear_click_uses_distance_not_tk_hit(self):
+        """齿轮的点击判定必须走距离，不能依赖 Tk 的 tag 命中。
+
+        Tk 画布只有「有填充的图元」才收得到点击，
+        fill="" 的透明 oval 是死的 —— 点了它 tag 绑定完全不响。
+        所以齿轮一旦缩小，就必须靠 Python 侧的距离判定。
+
+        这条测试守的是「别把齿轮改回 tag 绑定」：
+        那样齿轮会变得又大又难点中，而且没人知道为什么。
+        """
+        src = _read("health_float.py")
+        self.assertIn("def _gear_hit(", src,
+                      "齿轮的距离判定函数不见了")
+        self.assertIn("self._gear_hit(e.x, e.y)", src,
+                      "齿轮点击没有走距离判定")
+        # 齿轮本体上不能再挂 <Button-1> 的 tag 绑定
+        self.assertNotIn(
+            'tag_bind("gear", "<Button-1>"', src,
+            "齿轮又挂回 tag 点击绑定了 —— Tk 里那只有效于可见像素，"
+            "小齿轮会变得极难点中")
 
     def test_gear_does_not_overlap_hint_text(self):
         """齿轮不能和底部提示文字叠在一起。
@@ -293,6 +446,93 @@ class TestAlertLayout(unittest.TestCase):
                     bv, av, delta=0.6,
                     msg=f"齿轮图元 {i} 移动后相对位置变了（散架）: "
                         f"{b} -> {a}")
+
+    # ---------- 齿轮点击（真事件）----------
+    def test_clicking_gear_opens_settings(self):
+        """真点一下齿轮，必须打开设置面板。
+
+        这是齿轮缩小后的头号风险：视觉只有 9.4pt，
+        如果点击判定没跟着改，点它就什么都不会发生 ——
+        「设置入口」名存实亡。
+
+        用 event_generate 发真实事件，走完整的绑定链路，
+        而不是直接调 _open_settings —— 后者绕过了一切，
+        测不出「点不中」这种问题。
+
+        _open_settings 被换成打桩版本：真的开面板会留下一个
+        没人关的窗口（测试结束时它还在，容易影响后续用例）。
+        """
+        opened = []
+        self.app._open_settings = lambda: opened.append(True)
+        gx, gy = self.app.gear_center
+        self.app.cv.event_generate("<Button-1>", x=int(gx), y=int(gy))
+        self.app.root.update()
+        self.assertTrue(opened, "点齿轮没有打开设置面板")
+
+    def test_clicking_beside_gear_also_opens_settings(self):
+        """点齿轮旁边的空白（热区内）也要能打开设置。
+
+        齿轮只有 9.4pt 直径，鼠标瞄准它很费劲。
+        热区的意义就在这里：鼠标停在齿轮附近的空白处也算命中。
+        这个点在 Tk 里是点不到任何图元的 ——
+        只有距离判定能接住。
+        """
+        opened = []
+        self.app._open_settings = lambda: opened.append(True)
+        gx, gy = self.app.gear_center
+        # 热区边缘内侧，且明确不在齿轮可见像素上
+        d = hf.GEAR_HIT_R - 2
+        self.app.cv.event_generate("<Button-1>", x=int(gx + d), y=int(gy))
+        self.app.root.update()
+        self.assertTrue(opened,
+                        "点齿轮旁边的空白没打开设置 —— 热区判定没生效")
+
+    def test_clicking_far_from_gear_does_not_open_settings(self):
+        """离齿轮远的地方点击，不能误开设置面板。
+
+        距离判定是「命中就开设置」，如果范围算大了，
+        点标题、点副标题都会弹设置面板 —— 比点不中更烦。
+        """
+        opened = []
+        self.app._open_settings = lambda: opened.append(True)
+        gx, gy = self.app.gear_center
+        far = hf.GEAR_HIT_R + 25
+        self.app.cv.event_generate("<Button-1>", x=int(gx - far),
+                                   y=int(gy + far))
+        self.app.root.update()
+        self.assertFalse(opened, "点离齿轮很远的地方也弹出了设置面板")
+
+    def test_clicking_gear_does_not_drag_the_window(self):
+        """点齿轮开设置，不该顺手把浮窗也拖走。
+
+        点齿轮之后如果还进入拖拽逻辑，用户想点设置却把浮窗甩到了
+        屏幕另一边 —— 这是「点齿轮」最典型的误伤。
+
+        判据用标志位而不是 assert 失败：
+        Tk 会把事件回调里抛出的异常吞掉（只打到 stderr），
+        在 lambda 里直接 self.fail() 是测不出问题的。
+        """
+        dragged = []
+        self.app._drag_start = lambda e: dragged.append((e.x, e.y))
+        gx, gy = self.app.gear_center
+        self.app.cv.event_generate("<Button-1>", x=int(gx), y=int(gy))
+        self.app.root.update()
+        self.assertFalse(dragged,
+                         "点齿轮时启动了拖拽 —— 点齿轮不该拖动浮窗")
+
+    def test_gear_click_returns_break_to_stop_drag(self):
+        """命中齿轮时必须返回 "break"，阻断后续同级绑定。
+
+        Tk 里同一 widget 的多个 <Button-1> 绑定是「都执行」的，
+        只有返回 "break" 才能让后面的停下。
+        少了这一句，点齿轮就等于同时点了「开始拖拽」——
+        用户点设置，浮窗却跟着跑了。
+        """
+        src = _read("health_float.py")
+        self.assertIn('self._open_settings()\n            return "break"',
+                      src,
+                      "命中齿轮后没有 return \"break\" —— "
+                      "点齿轮会同时触发拖拽")
 
     # ---------- 文案 ----------
     def test_titles_are_four_characters_max(self):
@@ -463,6 +703,88 @@ class TestSingleCardNoWhitePanel(unittest.TestCase):
         """提醒卡整体要比上一版小。"""
         self.assertLessEqual(hf.ALERT[0], 280, "提醒卡宽度没缩小")
         self.assertLessEqual(hf.ALERT[1], 216, "提醒卡高度没缩小")
+
+
+class TestRoundRectGeometry(unittest.TestCase):
+    """圆角矩形的几何守卫。
+
+    背景：round_rect 原来用 create_polygon(smooth=True)，
+    样条会在直边上「鼓包」—— 按钮顶边变成一串小台阶，
+    用户截图放大后一眼就能看出那条边是波浪形的，不是一条直线。
+    """
+
+    def test_polygon_is_not_smooth(self):
+        """圆角矩形不能开样条。
+
+        smooth=True 的样条过点时会在直边中间鼓起，
+        边缘看着像被手抖着画出来的。
+
+        注意：匹配前必须剥掉注释**和 docstring** —— 解释
+        「为什么不用样条」的说明里正好写着 smooth=True，
+        直接 grep 会自己骗自己（这个坑踩过一次了）。
+        """
+        src = _read("health_float.py")
+        # 只看 round_rect 函数体，别被别处的 smooth=True 带偏
+        body = src.split("def round_rect(", 1)[1].split("\ndef ", 1)[0]
+        # 去掉 docstring
+        code = re.sub(r'"""(?:.|\n)*?"""', "", body)
+        # 去掉行注释
+        code = "\n".join(line.split("#", 1)[0]
+                         for line in code.splitlines())
+        self.assertNotIn(
+            "smooth=True", code,
+            "圆角矩形又用回样条多边形了 —— 直边会鼓包成波浪线")
+
+    def test_point_count_is_constant(self):
+        """点集点数必须与半径无关。
+
+        按钮是先以 10x10 建的（r=8 > 5），之后用 cv.coords()
+        换成真正的尺寸。如果点数会随半径变，coords() 换点集时
+        多边形就会错乱。
+        """
+        counts = set()
+        for r in (2, 5, 8, 12, 20):
+            pts = hf.round_rect_pts(0, 0, 100, 40, r)
+            counts.add(len(pts) // 2)
+        self.assertEqual(
+            len(counts), 1,
+            f"点集点数随半径变化了（{sorted(counts)}）—— "
+            "cv.coords() 换尺寸时多边形会错乱")
+
+    def test_radius_is_clamped_to_half_of_short_side(self):
+        """半径不能超过短边一半，否则圆弧自交。"""
+        pts = hf.round_rect_pts(0, 0, 10, 10, 8)
+        xs = [pts[i] for i in range(0, len(pts), 2)]
+        ys = [pts[i + 1] for i in range(0, len(pts), 2)]
+        self.assertGreaterEqual(min(xs), 0.0, "点跑到矩形左边外面了")
+        self.assertLessEqual(max(xs), 10.0, "点跑到矩形右边外面了")
+        self.assertGreaterEqual(min(ys), 0.0, "点跑到矩形上边外面了")
+        self.assertLessEqual(max(ys), 10.0, "点跑到矩形下边外面了")
+
+    def test_points_lie_on_the_arc(self):
+        """圆角处的点必须真的落在圆上，不是直线插值。
+
+        直边上的点可以任意分布，但每个圆角的点必须到圆心等距。
+        """
+        x1, y1, x2, y2, r = 10, 10, 90, 50, 12
+        pts = hf.round_rect_pts(x1, y1, x2, y2, r)
+        # 找右上角的圆心
+        cx, cy = x2 - r, y1 + r
+        # 取靠近该圆心的若干点，验证到圆心距离 == r
+        near = [p for p in range(0, len(pts), 2)
+                if abs(pts[p] - cx) < r and abs(pts[p + 1] - cy) < r]
+        self.assertGreater(len(near), 4, "右上角附近没有采样点")
+        for p in near[:3]:
+            d = ((pts[p] - cx) ** 2 + (pts[p + 1] - cy) ** 2) ** 0.5
+            self.assertAlmostEqual(
+                d, r, places=1,
+                msg=f"圆角采样点不在圆上（距离 {d:.2f}，应为 {r}）")
+
+    def test_rounding_step_count_is_enough(self):
+        """圆弧采样不能太少，否则圆角看着像倒角。"""
+        self.assertGreaterEqual(
+            hf.ARC_STEPS, 10,
+            "圆弧采样点太少 —— 圆角会看着像斜切角而不是圆弧")
 
 
 if __name__ == "__main__":
