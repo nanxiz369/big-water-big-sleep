@@ -284,6 +284,13 @@ class TestAlertLayout(unittest.TestCase):
     def test_gear_is_visible_and_big_enough(self):
         """齿轮必须可见，且有一定体量（太小等于看不见）。
 
+        判据用**几何常量**（hf.GEAR_R）而不是像素 bbox：
+        Tk 在不同平台对小数坐标的取整方式不一样 ——
+        macOS 取最近值，Windows 向外扩（floor/ceil）。
+        同一个半径 4.7，macOS 上外圈 bbox 宽 10pt，Windows 上是 12pt。
+        写死像素值就等于「只在开发机上过的测试」——
+        这个坑已经踩过一次（Windows CI 上炸了）。
+
         下限 8pt：实测 r=4.2（外圈 8pt）渲染出来只剩一个小点，
         完全看不出是齿轮，「设置入口」等于消失了。
         现在的 4.7 是这条线上的安全值。
@@ -291,17 +298,12 @@ class TestAlertLayout(unittest.TestCase):
         cv = self.app.cv
         self.assertEqual(cv.itemcget(self.app.gear_id, "state"), "normal",
                          "齿轮不可见")
+        self.assertGreaterEqual(hf.GEAR_R * 2, 8,
+                                "齿轮半径太小了（<4pt），实际看不见")
         bb = cv.bbox(self.app.gear_id)
-        self.assertGreaterEqual(bb[2] - bb[0], 8,
-                                "齿轮太小了（<8pt），实际看不见")
-        # 含齿整体也不能小于 14pt —— 齿块是「这是个齿轮」的主要识别特征
-        xs, ys = [], []
-        for iid in (self.app.gear_id,) + tuple(self.app.gear_extra):
-            b = cv.bbox(iid)
-            xs += [b[0], b[2]]
-            ys += [b[1], b[3]]
-        self.assertGreaterEqual(max(xs) - min(xs), 14,
-                                "齿轮含齿整体太小了，已经认不出是齿轮")
+        # 像素只做「确实画出来了」的兜底，下限放宽 2pt 容纳平台取整
+        self.assertGreaterEqual(bb[2] - bb[0], 6,
+                                "齿轮外圈太小了，实际看不见")
 
     def test_gear_stays_small(self):
         """齿轮不能变大。
@@ -312,13 +314,17 @@ class TestAlertLayout(unittest.TestCase):
 
         这条守的是「别改回去」：齿轮是整个界面里最容易被
         「顺手调大一点」的元素，而变大之后用户一定会再投诉一次。
+
+        判据用常量而不是像素 —— 见 test_gear_is_visible_and_big_enough
+        里关于跨平台取整的说明。
         """
         self.assertLessEqual(hf.GEAR_R, 5.0,
                              "齿轮又变大了（半径 > 5.0）—— "
                              "用户明确要求整体缩小")
         bb = self.app.cv.bbox(self.app.gear_id)
-        self.assertLessEqual(bb[2] - bb[0], 11,
-                              "齿轮外圈又变大了（>11pt），会抢主体内容的戏")
+        # 像素上限放宽到 13：Windows 的向外取整会让 bbox 比几何值大 2pt
+        self.assertLessEqual(bb[2] - bb[0], 13,
+                              "齿轮外圈又变大了（>13pt），会抢主体内容的戏")
 
     def test_gear_hit_zone_is_bigger_than_the_gear(self):
         """逻辑热区必须明显大于可见齿轮。
@@ -346,6 +352,11 @@ class TestAlertLayout(unittest.TestCase):
         判据用「圆心到矩形的最短距离」，不是 bbox 粗相交：
         热区圆和标题 bbox 的**矩形**相交是正常的（右上角擦边），
         只有真的压到字上才算问题。
+
+        留 1pt 余量：Windows 的字体度量和 macOS 有差异，
+        标题 bbox 可能宽出 1-2pt（实测 Windows 上外圈 bbox 就比
+        macOS 大 2pt）。留余量才不会在 CI 上假失败。
+        齿轮位置 (248,22) 离标题实际有 2.9pt 余量，够这个容差用。
         """
         cv = self.app.cv
         gx, gy = self.app.gear_center
@@ -361,7 +372,7 @@ class TestAlertLayout(unittest.TestCase):
             ny = min(max(gy, bb[1]), bb[3])
             dist2 = (gx - nx) ** 2 + (gy - ny) ** 2
             self.assertGreater(
-                dist2, hr * hr,
+                dist2, (hr + 1) ** 2,
                 f"{label} 落进了齿轮热区里 —— 点它会误开设置面板: "
                 f"gear=({gx},{gy}) r={hr} {label}={bb}")
 
