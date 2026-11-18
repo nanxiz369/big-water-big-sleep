@@ -102,6 +102,15 @@ MUTANTS = [
      lambda: _flatten_icon()),
     ("图标把白云也一起抠掉",
      lambda: _strip_white_everywhere()),
+    ("套无边框改回依赖 Tk 返回值的老写法",
+     lambda: patch(SRC,
+                   '        root.tk.call("wm", "overrideredirect", root._w, 1)',
+                   "        root.overrideredirect(True)")),
+    ("PhotoImage 不再绑定自己的 root",
+     lambda: patch(SRC,
+                   "tk.PhotoImage(master=self.root, file=path)",
+                   "tk.PhotoImage(file=path)",
+                   count=2)),
 ]
 
 

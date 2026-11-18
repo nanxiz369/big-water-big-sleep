@@ -51,6 +51,29 @@ def _needs_borderless_fix(state):
     return state is not True
 
 
+def _set_borderless(root):
+    """给窗口套上无边框，且**不依赖 Tk 的返回值**。
+
+    为什么不能直接写 `root.overrideredirect(True)`：
+
+    tkinter 的 `wm_overrideredirect` 会把 Tk 的返回值交给 `_getboolean()`
+    转换，而 `wm overrideredirect` 在某些环境（多 Tk interpreter、
+    某些 Tk 版本）下返回的是**空字符串** —— `_getboolean("")` 直接抛
+    `TclError: expected boolean value but got ""`，
+    表现是「应用刚启动就崩」，而且只在特定环境触发，极难排查。
+
+    这个坑是 CI 抓出来的：macOS 上跑测试时，第三个 Tk root 建起来后
+    一调 overrideredirect 就炸，顺带把后面所有测试的图像资源带崩。
+
+    所以这里直接用 tk.call 发命令，绕开 tkinter 的返回值转换。
+    """
+    try:
+        root.tk.call("wm", "overrideredirect", root._w, 1)
+        return True
+    except tk.TclError:
+        return False
+
+
 def _base_dir():
     """程序根目录。
 
@@ -923,7 +946,7 @@ class FloatApp:
         self.images = self._load_images()
 
         root.title("大水大睡大眺望")
-        root.overrideredirect(True)
+        _set_borderless(root)
         root.attributes("-topmost", True)
         try:
             root.attributes("-alpha", self.base_opacity)
@@ -993,8 +1016,15 @@ class FloatApp:
         浮窗。所以改成周期性巡检（_borderless_watch）。
         """
         try:
-            if _needs_borderless_fix(self.root.overrideredirect()):
-                self.root.overrideredirect(True)
+            # 读取也要防一手：wm overrideredirect 在某些环境下返回空字符串，
+            # tkinter 的 _getboolean 会直接抛 TclError。
+            # 读不到就当作「需要修复」，宁可多套一次无边框。
+            try:
+                state = self.root.overrideredirect()
+            except tk.TclError:
+                state = None
+            if _needs_borderless_fix(state):
+                _set_borderless(self.root)
             self.root.attributes("-topmost", True)
         except tk.TclError:
             pass
@@ -1019,7 +1049,7 @@ class FloatApp:
         for path in glob.glob(os.path.join(ASSETS_DIR, "sz_*.png")):
             m = re.search(r"sz_(\d+)x(\d+)\.png$", path)
             if m:
-                imgs[(int(m.group(1)), int(m.group(2)))] = tk.PhotoImage(file=path)
+                imgs[(int(m.group(1)), int(m.group(2)))] = tk.PhotoImage(master=self.root, file=path)
         # 提醒卡专用素材：底色已经换成卡片色（见 assets/recolor_assets.py），
         # 所以舷窗能直接融进卡片，不会露出原来那块灰底。
         self.card_images = {}
@@ -1028,7 +1058,7 @@ class FloatApp:
             m = re.search(r"card_\w+_(\d+)x(\d+)\.png$", path)
             if m:
                 self.card_images[(int(m.group(1)), int(m.group(2)))] = \
-                    tk.PhotoImage(file=path)
+                    tk.PhotoImage(master=self.root, file=path)
         return imgs
 
     # ---------- 调度 ----------
@@ -1626,7 +1656,7 @@ class FloatApp:
         bw = tk.Toplevel(self.root)
         self.blackout = bw
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        bw.overrideredirect(True)
+        _set_borderless(bw)
         bw.attributes("-topmost", True)
         try:
             bw.attributes("-alpha", 0.97)

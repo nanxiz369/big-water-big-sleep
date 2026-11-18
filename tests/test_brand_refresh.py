@@ -25,6 +25,7 @@ import os
 import re
 import sys
 import unittest
+import ast
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _utf8_console  # noqa: F401,E402
@@ -51,6 +52,47 @@ PRODUCT_ASCII = "Health Float"
 def _read(rel_path):
     with open(os.path.join(ROOT_DIR, rel_path), "r", encoding="utf-8") as fh:
         return fh.read()
+
+
+def _calls_in_function(src, func_name):
+    """列出某个函数里所有的方法调用：(接收者表达式, 方法名)。
+
+    用 AST 而不是文本匹配 —— 文本匹配会把 docstring 里
+    「不能直接写 root.overrideredirect(True)」这类说明当成真调用。
+    """
+    tree = ast.parse(src)
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                and node.name == func_name:
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call) \
+                        and isinstance(sub.func, ast.Attribute):
+                    recv = ast.unparse(sub.func.value)
+                    out.append((recv, sub.func.attr))
+    return out
+
+
+def _all_overrideredirect_calls(src):
+    """列出文件里所有**带参数**的 .overrideredirect(...) 调用。
+
+    只看设置调用（overrideredirect(True)）——
+    无参的读取调用（overrideredirect()）是查状态，
+    它在 _ensure_borderless 里已被 try/except 包住，是安全的。
+
+    返回：(所在函数名, 行号)。
+    """
+    tree = ast.parse(src)
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call) \
+                        and isinstance(sub.func, ast.Attribute) \
+                        and sub.func.attr == "overrideredirect" \
+                        and sub.args:
+                    out.append((node.name, sub.lineno))
+    return out
 
 
 class TestBubbleTypography(unittest.TestCase):
@@ -359,6 +401,134 @@ class TestIconAsset(unittest.TestCase):
         self.assertIn("alpha", src.lower())
         self.assertIn("trim_transparent_border", src,
                       "脚本必须只抠外圈（内部的白云要保留）")
+
+
+class TestTkRobustness(unittest.TestCase):
+    """Tk 的两个脆弱点 —— 都是 CI 抓出来的真 bug。
+
+    这两条不是「顺手加的健壮性」，是实际会让用户遇到「应用启动即崩」
+    或「窗口显示异常」的坑，必须有守卫盯着不许改回去。
+    """
+
+    def test_borderless_does_not_depend_on_tk_return_value(self):
+        """套无边框不能依赖 `wm overrideredirect` 的返回值。
+
+        tkinter 的 wm_overrideredirect 会把返回值交给 _getboolean()，
+        而某些环境下 Tk 返回的是空字符串 —— _getboolean("") 直接抛
+        TclError。表现是应用刚启动就崩。
+        """
+        calls = _calls_in_function(_read("health_float.py"), "_set_borderless")
+        attrs = [c for c in calls if c[1] == "overrideredirect"]
+        self.assertEqual(
+            attrs, [],
+            "_set_borderless 里不能调 overrideredirect —— "
+            "它会因 Tk 返回空字符串而抛 TclError",
+        )
+        tk_calls = [c for c in calls if c[1] == "call"]
+        self.assertTrue(
+            tk_calls,
+            "_set_borderless 必须用 tk.call 发命令，绕开返回值转换",
+        )
+
+    def test_no_bare_overrideredirect_call_remains(self):
+        """整个文件里不能有裸的 .overrideredirect(...) 调用。
+
+        用 AST 检查而不是文本匹配 —— 文本匹配会误伤 docstring 里
+        「为什么不能直接写 root.overrideredirect(True)」这类说明。
+        """
+        src = _read("health_float.py")
+        offenders = []
+        for name, lineno in _all_overrideredirect_calls(src):
+            if name == "_set_borderless":
+                continue
+            offenders.append(f"第 {lineno} 行 {name}()")
+        self.assertEqual(
+            offenders, [],
+            f"还有裸的 overrideredirect 调用：{offenders}\n请改用 _set_borderless()",
+        )
+
+    def test_photo_images_are_bound_to_their_own_root(self):
+        """PhotoImage 必须指定 master=self.root。
+
+        不指定的话图片会绑定到 tkinter 的「默认 root」，
+        而不是浮窗自己的 root。一旦进程里存在多个 Tk interpreter
+        （测试环境、或将来任何多窗口场景），canvas 引用到的就是
+        另一个 interpreter 的图片名，报 "pyimage11 doesn't exist"。
+        """
+        src = _read("health_float.py")
+        self.assertNotIn(
+            "tk.PhotoImage(file=", src,
+            "PhotoImage 没有指定 master —— 跨 Tk interpreter 时图片名会串",
+        )
+        self.assertIn("tk.PhotoImage(master=self.root, file=path)", src)
+
+    def test_borderless_helper_returns_a_bool(self):
+        """_set_borderless 必须给出明确成败，不能默默吞异常。"""
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            self.assertIsInstance(hf._set_borderless(root), bool)
+        finally:
+            root.destroy()
+
+    def test_borderless_helper_survives_a_broken_root(self):
+        """root 坏掉时不能抛异常 —— 巡检是后台任务，抛了就停了。"""
+        root = tk.Tk()
+        root.withdraw()
+        root.destroy()
+        try:
+            result = hf._set_borderless(root)
+        except Exception as e:                      # noqa: BLE001
+            self.fail(f"_set_borderless 对坏掉的 root 抛了异常：{e}")
+        self.assertFalse(result)
+
+    def test_borderless_survives_when_tk_returns_empty_string(self):
+        """复现 CI 上那个真实的崩溃。
+
+        `wm overrideredirect` 在某些环境返回空字符串 →
+        tkinter 的 `_getboolean("")` 抛 TclError →
+        应用刚启动就崩。
+
+        这里用一个「一调 overrideredirect 就炸」的假 root 来模拟，
+        验证 _set_borderless 走的是 tk.call 而不是 overrideredirect。
+        """
+        real = tk.Tk()
+        real.withdraw()
+        try:
+            class FakeRoot:
+                def __init__(self, r):
+                    self._r = r
+                    self.tk = r.tk
+                    self._w = r._w
+
+                def overrideredirect(self, *a):
+                    raise tk.TclError('expected boolean value but got ""')
+
+            fake = FakeRoot(real)
+
+            # 旧写法在这个环境下必崩 —— 先确认模拟是有效的
+            with self.assertRaises(tk.TclError):
+                fake.overrideredirect(True)
+
+            # 新写法必须扛住
+            try:
+                result = hf._set_borderless(fake)
+            except Exception as e:                  # noqa: BLE001
+                self.fail(f"_set_borderless 没扛住空返回值：{e}")
+            self.assertTrue(result, "新写法应该成功套上无边框")
+        finally:
+            real.destroy()
+
+    def test_borderless_actually_takes_effect_on_a_real_root(self):
+        """不是「不报错」就算过 —— 无边框必须真的生效。"""
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            hf._set_borderless(root)
+            self.assertTrue(root.overrideredirect(),
+                            "无边框没有真正生效")
+        finally:
+            root.destroy()
 
 
 class TestProductName(unittest.TestCase):
