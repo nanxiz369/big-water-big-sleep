@@ -128,25 +128,40 @@ class TestBubbleTypography(unittest.TestCase):
         """
         return self._font_of(item_id).actual("size")
 
-    # —— 目标字号不许被改小 ——
+    # —— 目标字号不许被改小，也不许再往上冲 ——
 
-    def test_time_row_target_size_was_increased(self):
-        """时间行目标字号必须是 14（用户要求放大，不是保持 12）。"""
+    def test_time_row_target_size_is_the_middle_ground(self):
+        """时间行目标字号必须落在 13~14。
+
+        上一版是 12，用户说「大一点点」→ 我放到 14，
+        用户看了预览说「稍微有点大了，就在这个和上一版的中间」→ 13。
+        这个区间就是用户拍板的那一档，不许再漂移。
+        """
         self.assertGreaterEqual(
-            hf.BUBBLE_TIME_SIZE, 14,
+            hf.BUBBLE_TIME_SIZE, 13,
             f"时间行目标字号退回 {hf.BUBBLE_TIME_SIZE}pt 了 —— "
-            f"用户明确要求字体放大",
+            f"用户明确要求放大",
+        )
+        self.assertLessEqual(
+            hf.BUBBLE_TIME_SIZE, 14,
+            f"时间行目标字号涨到 {hf.BUBBLE_TIME_SIZE}pt 了 —— "
+            f"用户明确说过这一档偏大",
         )
 
-    def test_name_row_target_size_was_increased(self):
-        """名称行目标字号必须是 12（原来是 10）。"""
+    def test_name_row_target_size_is_the_middle_ground(self):
+        """名称行目标字号必须落在 11~12（上一版是 10）。"""
         self.assertGreaterEqual(
-            hf.BUBBLE_NAME_SIZE, 12,
+            hf.BUBBLE_NAME_SIZE, 11,
             f"名称行目标字号退回 {hf.BUBBLE_NAME_SIZE}pt 了",
+        )
+        self.assertLessEqual(
+            hf.BUBBLE_NAME_SIZE, 12,
+            f"名称行目标字号涨到 {hf.BUBBLE_NAME_SIZE}pt 了 —— "
+            f"用户明确说过这一档偏大",
         )
 
     def test_target_sizes_are_not_absurd(self):
-        """反过来也要有上限 —— 放到 24pt 会把画布撑爆。"""
+        """兜底上限 —— 放到 24pt 会把画布撑爆。"""
         self.assertLessEqual(hf.BUBBLE_TIME_SIZE, 18)
         self.assertLessEqual(hf.BUBBLE_NAME_SIZE, 16)
 
@@ -155,13 +170,29 @@ class TestBubbleTypography(unittest.TestCase):
     def test_normal_state_uses_the_increased_sizes(self):
         """最常见的场景（正常倒计时）必须真的用上放大后的字号。"""
         self.app._set_bubble_text("15 分40秒", "看看远方")
-        self.assertEqual(self._size_of(self.app.time_id), 14)
-        self.assertEqual(self._size_of(self.app.name_id), 12)
+        self.assertEqual(self._size_of(self.app.time_id), 13)
+        self.assertEqual(self._size_of(self.app.name_id), 11)
 
     def test_short_countdown_keeps_the_large_time_size(self):
-        """秒级倒计时（'30 秒'）也应该是 14pt。"""
+        """秒级倒计时（'30 秒'）也应该是 13pt。"""
         self.app._set_bubble_text("30 秒", "看看远方")
-        self.assertEqual(self._size_of(self.app.time_id), 14)
+        self.assertEqual(self._size_of(self.app.time_id), 13)
+
+    def test_normal_time_row_keeps_clear_space_from_the_gear(self):
+        """常态下时间行和齿轮之间要留得出呼吸的间隙。
+
+        14pt 时「秒」字几乎贴着齿轮（间隙 4.8pt），
+        13pt 时回到 9.3pt —— 这正是用户说 14pt「有点大」的实拍理由。
+        """
+        gear_left = (hf.BUBBLE[0] - 17) - hf.GEAR_R
+        self.app._set_bubble_text("19 分58秒", "看看远方")
+        fnt = self._font_of(self.app.time_id)
+        right_edge = hf.BUBBLE[0] / 2 + fnt.measure("19 分58秒") / 2
+        self.assertGreaterEqual(
+            gear_left - right_edge, 8,
+            f"时间行右缘 {right_edge:.1f} 离齿轮左缘 {gear_left:.1f} "
+            f"只剩 {gear_left - right_edge:.1f}pt —— 挤",
+        )
 
     # —— 核心难点：放大后不能破版 ——
 

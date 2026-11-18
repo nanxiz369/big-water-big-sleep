@@ -24,9 +24,11 @@ import health_float as hf  # noqa: E402
 from preview_alert import grab_window  # noqa: E402
 
 # (标签, 时间字号, 名称字号)
+# 三版并排：上一版、我先做的 14/12、用户拍板的中间值 13/11。
 VARIANTS = [
-    ("放大前 12/10", 12, 10),
-    ("放大后 14/12", 14, 12),
+    ("上一版 12/10", 12, 10),
+    ("我说有点大的 14/12", 14, 12),
+    ("定稿 13/11", 13, 11),
 ]
 SAMPLE_TIME = "19 分59秒"
 SAMPLE_NAME = "看看远方"

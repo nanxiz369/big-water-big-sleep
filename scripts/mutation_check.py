@@ -49,11 +49,13 @@ OLD_CN = "大水大睡大" + "健康"
 
 MUTANTS = [
     ("时间行目标字号改回 12",
-     lambda: patch(SRC, "BUBBLE_TIME_SIZE = 14", "BUBBLE_TIME_SIZE = 12")),
+     lambda: patch(SRC, "BUBBLE_TIME_SIZE = 13", "BUBBLE_TIME_SIZE = 12")),
     ("名称行目标字号改回 10",
-     lambda: patch(SRC, "BUBBLE_NAME_SIZE = 12", "BUBBLE_NAME_SIZE = 10")),
+     lambda: patch(SRC, "BUBBLE_NAME_SIZE = 11", "BUBBLE_NAME_SIZE = 10")),
+    ("字号涨回用户说偏大的那一档",
+     lambda: patch(SRC, "BUBBLE_TIME_SIZE = 13", "BUBBLE_TIME_SIZE = 14")),
     ("字号放到失控的 24",
-     lambda: patch(SRC, "BUBBLE_TIME_SIZE = 14", "BUBBLE_TIME_SIZE = 24")),
+     lambda: patch(SRC, "BUBBLE_TIME_SIZE = 13", "BUBBLE_TIME_SIZE = 24")),
     ("绕过自适应：直接写死字号",
      lambda: patch(SRC,
                    "        ts = self._fit_size(time_text, BUBBLE_TIME_SIZE, BUBBLE_TIME_MIN,\n"
