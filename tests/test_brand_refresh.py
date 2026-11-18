@@ -179,19 +179,40 @@ class TestBubbleTypography(unittest.TestCase):
         self.assertEqual(self._size_of(self.app.time_id), 13)
 
     def test_normal_time_row_keeps_clear_space_from_the_gear(self):
-        """常态下时间行和齿轮之间要留得出呼吸的间隙。
+        """时间行和齿轮之间要留得出呼吸的间隙。
 
         14pt 时「秒」字几乎贴着齿轮（间隙 4.8pt），
         13pt 时回到 9.3pt —— 这正是用户说 14pt「有点大」的实拍理由。
+
+        这里必须用**最宽**的时间文案来量：
+        「15 分40秒后」（prewarn 形态）比「19 分58秒」更宽，
+        只拿短的量会漏掉「避让宽度被放宽」这种回归。
         """
         gear_left = (hf.BUBBLE[0] - 17) - hf.GEAR_R
-        self.app._set_bubble_text("19 分58秒", "看看远方")
+        widest = max(
+            ("15 分40秒", "15 分40秒后", "19 分58秒", "59 分59秒"),
+            key=lambda t: self._font_of(self.app.time_id).measure(t))
+        self.app._set_bubble_text(widest, "看看远方")
         fnt = self._font_of(self.app.time_id)
-        right_edge = hf.BUBBLE[0] / 2 + fnt.measure("19 分58秒") / 2
+        right_edge = hf.BUBBLE[0] / 2 + fnt.measure(widest) / 2
         self.assertGreaterEqual(
-            gear_left - right_edge, 8,
-            f"时间行右缘 {right_edge:.1f} 离齿轮左缘 {gear_left:.1f} "
-            f"只剩 {gear_left - right_edge:.1f}pt —— 挤",
+            gear_left - right_edge, 6,
+            f"最宽的时间行「{widest}」右缘 {right_edge:.1f} 离齿轮左缘 "
+            f"{gear_left:.1f} 只剩 {gear_left - right_edge:.1f}pt —— 挤",
+        )
+
+    def test_set_bubble_text_must_go_through_fit_size(self):
+        """_set_bubble_text 的两行都必须走 _fit_size。
+
+        直接写死字号等于绕过自适应 —— 一旦目标字号被调大，
+        最长的那句就会冲出画布。
+        """
+        src = _read("health_float.py")
+        body = src.split("def _set_bubble_text")[1].split("\n    def ")[0]
+        self.assertEqual(
+            body.count("_fit_size("), 2,
+            "_set_bubble_text 里 _fit_size 的调用次数不是 2 —— "
+            "时间行或名称行绕过了自适应",
         )
 
     # —— 核心难点：放大后不能破版 ——

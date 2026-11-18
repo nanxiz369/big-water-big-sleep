@@ -64,7 +64,7 @@ MUTANTS = [
     ("自适应下限被撤掉（可以缩到 1pt）",
      lambda: patch(SRC, "BUBBLE_NAME_MIN = 10", "BUBBLE_NAME_MIN = 1")),
     ("时间行不再避让齿轮",
-     lambda: patch(SRC, "BUBBLE_TIME_MAX_W = 94",
+     lambda: patch(SRC, "BUBBLE_TIME_MAX_W = 84",
                    "BUBBLE_TIME_MAX_W = 140")),
     ("左右留白归零",
      lambda: patch(SRC, "BUBBLE_TEXT_PAD = 6", "BUBBLE_TEXT_PAD = 0")),
