@@ -113,6 +113,19 @@ MUTANTS = [
                    "tk.PhotoImage(master=self.root, file=path)",
                    "tk.PhotoImage(file=path)",
                    count=2)),
+    ("设置项的 hint 又被逐项渲染",
+     lambda: patch(SRC,
+                   "            # 2026-11-18 用户截图反馈：每一项后面的 hint 小字",
+                   "            tk.Label(row, text=hint, font=ui_font(8),"
+                   " bg=\"#ffffff\",\n"
+                   "                     fg=C_DIM).pack(side=\"left\","
+                   " padx=(10, 0))\n"
+                   "            # 2026-11-18 用户截图反馈：每一项后面的 hint 小字")),
+    ("顶部 intro 丢了「0 = 关」规则",
+     lambda: patch(SRC,
+                   'intro="间隔 0 = 关 · 时间留空 = 不提醒 · 右键舷窗回这里"',
+                   'intro="双击浮窗随时能回到这里修改"',
+                   count=2)),
 ]
 
 

@@ -91,7 +91,7 @@ BASE_DIR = _base_dir()
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 SOUND = "/System/Library/Sounds/Ping.aiff"
 
-VERSION = "1.2.5"
+VERSION = "1.2.6"
 
 
 def _log(msg):
@@ -687,7 +687,7 @@ class LegacySettingsDialog(tk.Toplevel):
     """
 
     def __init__(self, master, cfg, title="大水大睡大眺望 设置",
-                 intro="双击浮窗随时能回到这里修改"):
+                 intro="间隔 0 = 关 · 时间留空 = 不提醒 · 右键舷窗回这里"):
         super().__init__(master)
         self.cfg = cfg
         self.on_saved = None
@@ -726,18 +726,11 @@ class LegacySettingsDialog(tk.Toplevel):
                 w.var = var
                 w.pack(side="left")
             self.widgets[key] = w
-            tk.Label(row, text=hint, font=ui_font(8), bg="#ffffff",
-                     fg=C_DIM).pack(side="left", padx=(10, 0))
-
-        # —— 使用说明：让用户知道还有哪些入口 ——
-        help_box = tk.Frame(self, bg="#f4f6f9")
-        help_box.pack(fill="x", padx=22, pady=(12, 0))
-        tk.Label(help_box,
-                 text="⚙ 点舷窗右下角齿轮  ·  右键舷窗 = 快捷菜单\n"
-                      "🎙 会议模式（不黑屏）  ·  🔕 静音模式（只弹窗不出声）\n"
-                      "间隔填 0 = 关闭该提醒  ·  时间留空 = 不提醒",
-                 font=ui_font(8), bg="#f4f6f9", fg=C_DIM,
-                 justify="left", anchor="w").pack(padx=12, pady=10, fill="x")
+            # 2026-11-18 用户截图反馈：每一项后面的 hint 小字
+            # （「每几分钟一次（0=关）」这种）全部删掉 ——
+            # 10 行重复的小字是视觉噪音，关键规则（0=关 / 留空=不提醒）
+            # 已经合并进面板顶部 intro 一行里。
+            # hint 数据仍保留在 SETT_ITEMS，只是不再逐项渲染。
 
         btns = tk.Frame(self, bg="#ffffff")
         btns.pack(pady=(14, 18))
@@ -804,7 +797,7 @@ if HAVE_CTK:
         """
 
         def __init__(self, master, cfg, title="大水大睡大眺望 设置",
-                     intro="双击浮窗随时能回到这里修改"):
+                     intro="间隔 0 = 关 · 时间留空 = 不提醒 · 右键舷窗回这里"):
             super().__init__(master)
             self.cfg = cfg
             self.on_saved = None
@@ -869,21 +862,9 @@ if HAVE_CTK:
                         w.pack(side="left")
                     self.widgets[key] = w
 
-                    ctk.CTkLabel(row, text=hint, font=ui_font(10),
-                                 text_color="#8a97a6", anchor="w").pack(
-                                     side="left", padx=(12, 0))
-
-            # —— 使用说明卡片 ——
-            help_box = ctk.CTkFrame(self, fg_color="#f4f6f9", corner_radius=14,
-                                     border_width=1, border_color="#e9eef4")
-            help_box.pack(fill="x", padx=20, pady=(4, 0))
-            ctk.CTkLabel(
-                help_box,
-                text="⚙ 点舷窗右下角齿轮  ·  右键舷窗 = 快捷菜单\n"
-                     "🎙 会议模式（不黑屏）  ·  🔕 静音模式（只弹窗不出声）\n"
-                     "间隔填 0 = 关闭该提醒  ·  时间留空 = 不提醒",
-                font=ui_font(10), text_color=C_DIM, justify="left",
-                anchor="w").pack(padx=14, pady=11, fill="x")
+            # 2026-11-18 用户截图反馈：每一项后面的 hint 小字全部删掉
+            #（跟 Legacy 面板同一轮改动，两版必须保持一致）。
+            # 关键规则集中在顶部 intro 一行，底部帮助卡片一并移除。
 
             # —— 底部按钮 ——
             btns = ctk.CTkFrame(self, fg_color="transparent")
@@ -1787,7 +1768,7 @@ class FloatApp:
             self.settings_win.focus_force()
             return self.settings_win
         dlg = SettingsDialog(self.root, self.cfg,
-                             intro="这里改所有提醒时间 · 保存立即生效")
+                             intro="设好时间就开始 · 间隔 0 = 关 · 留空 = 不提醒")
         dlg.on_saved = self._apply_settings
         self.settings_win = dlg
         return dlg
@@ -1948,7 +1929,7 @@ def main():
         root.withdraw()
         dlg = SettingsDialog(
             root, cfg, title="欢迎 🌿 首次设置",
-            intro="设好时间就开始 · 以后点舷窗右下角 ⚙ 随时能改")
+            intro="设好时间就开始 · 间隔 0 = 关 · 留空 = 不提醒")
         dlg.on_saved = lambda: None
         root.wait_window(dlg)
         save_config(cfg)          # 用户直接关窗也会存下默认值

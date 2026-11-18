@@ -693,5 +693,85 @@ class TestProductName(unittest.TestCase):
         self.assertIn(f'--name "{PRODUCT_ASCII}"', src)
 
 
+class TestSettingsPanelSimplicity(unittest.TestCase):
+    """设置面板的极简改版 —— 2026-11-18 用户截图反馈。
+
+    用户发两张截图：「（逐项 hint）这个不要」「（底部帮助卡）
+    这个里面的一些内容放到上面去，尽量简洁」。
+
+    也就是三件事：
+      · 每个设置项后面的 hint 小字全部删掉（10 行重复的视觉噪音）
+      · 底部三行帮助卡片删掉
+      · 关键规则（0=关 / 留空=不提醒）压成一行放标题下
+
+    这组守卫防止它们被「好心」加回来。
+    """
+
+    def test_per_item_hints_are_not_rendered(self):
+        """设置项的 hint 不再逐项渲染。
+
+        10 行「每几分钟一次（0=关）」式的小字是视觉噪音；
+        规则集中在顶部一行（见 test_intro_carries_the_rules）。
+        """
+        src = _read("health_float.py")
+        self.assertNotIn(
+            "text=hint", src,
+            "设置项的 hint 又被逐项渲染了 —— "
+            "规则应该在顶部一行，不要 10 行小字",
+        )
+
+    def test_bottom_help_card_is_gone(self):
+        """底部的三行帮助卡片不能再回来。
+
+        它的内容已精简合并进顶部 intro。
+        """
+        src = _read("health_float.py")
+        for phrase in ("右键舷窗 = 快捷菜单",
+                       "会议模式（不黑屏）",
+                       "静音模式（只弹窗不出声）"):
+            self.assertNotIn(
+                phrase, src,
+                f"底部帮助卡的「{phrase}」又回来了 —— 应该合并进顶部 intro",
+            )
+
+    def test_intro_carries_the_rules(self):
+        """顶部一行必须带关键规则：0 = 关、留空 = 不提醒。
+
+        hint 删掉之后，这两条规则**只**活在 intro 里 ——
+        intro 丢了它们，用户就再也没地方知道「填 0 能关提醒」。
+        """
+        src = _read("health_float.py")
+        defaults = [
+            line.strip() for line in src.splitlines()
+            if 'intro="间隔 0 = 关' in line or 'intro="设好时间' in line
+        ]
+        self.assertGreaterEqual(
+            len(defaults), 4,
+            f"intro 默认值只剩 {len(defaults)} 处（应为 4：两个面板默认 + "
+            f"两处场景调用），规则行可能被删了",
+        )
+        for line in defaults:
+            self.assertIn(
+                "0 = 关", line,
+                f"intro「{line}」缺了「0 = 关」规则 —— "
+                f"这是用户知道能关闭提醒的唯一途径",
+            )
+
+    def test_both_panels_share_the_same_intro_default(self):
+        """Legacy 版和 CTK 版的 intro 默认值必须一致。
+
+        两版是同一面板的「有/无 CustomTkinter」两个形态，
+        文案分叉等于给不同用户看不同的说明。
+        """
+        src = _read("health_float.py")
+        defaults = re.findall(r'intro="([^"]+)"', src)
+        top_default = "间隔 0 = 关 · 时间留空 = 不提醒 · 右键舷窗回这里"
+        self.assertEqual(
+            defaults.count(top_default), 2,
+            f"「{top_default}」应出现在两个面板的默认参数里，"
+            f"实际 {defaults.count(top_default)} 处",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
