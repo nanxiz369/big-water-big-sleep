@@ -428,6 +428,29 @@ class TestProductName(unittest.TestCase):
         src = _read("build_macos_app.sh")
         self.assertIn('-volname "$DISPLAY_NAME"', src)
 
+    def test_release_workflow_dmg_volume_uses_the_display_name(self):
+        """CI 打的 DMG 卷名也要是中文名。
+
+        上一轮就踩过「本地脚本和 CI 脚本不一致」的坑 ——
+        只改本地 build_macos_app.sh 而忘了 CI 里的 hdiutil，
+        就会出现「本地卷名中文、用户下载下来的卷名还是英文」。
+        """
+        src = _read(os.path.join(".github", "workflows", "release.yml"))
+        self.assertIn(
+            f'-volname "{PRODUCT_CN}"', src,
+            "Release workflow 里的 DMG 卷名没改成中文名 —— "
+            "会跟本地 build_macos_app.sh 不一致",
+        )
+
+    def test_release_body_mentions_the_display_name_in_login_items(self):
+        """登录项里显示的是 CFBundleDisplayName，说明文字要跟着改。
+
+        否则用户按说明去找「Health Float.app」根本找不到 ——
+        列表里写的是「大水大睡大眺望」。
+        """
+        src = _read(os.path.join(".github", "workflows", "release.yml"))
+        self.assertIn(f"登录项 → 添加「{PRODUCT_CN}」", src)
+
     def test_filesystem_name_stays_ascii(self):
         """bundle 目录名必须保持 ASCII。
 

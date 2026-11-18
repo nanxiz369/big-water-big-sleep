@@ -51,7 +51,7 @@ jobs:
           rsync -a --delete "dist/Health Float.app/" "$DMG_ROOT/Health Float.app/"
           ln -sfn /Applications "$DMG_ROOT/Applications"
           ls -la "$DMG_ROOT"
-          hdiutil create -volname "Health Float" -srcfolder "$DMG_ROOT" -ov -format UDZO "dist/Health Float.dmg"
+          hdiutil create -volname "大水大睡大眺望" -srcfolder "$DMG_ROOT" -ov -format UDZO "dist/Health Float.dmg"
           lipo -info "dist/Health Float.app/Contents/MacOS/Health Float"
           # 架构必须是 universal2 —— README 承诺「Intel + Apple Silicon 通用」。
           # lipo -info 只是打印，不会让 CI 失败，所以这里显式断言：
@@ -217,7 +217,7 @@ jobs:
             ### 第一次使用
             1. 双击打开
             2. 首次会弹出设置窗口，**用上下箭头**选好洗澡和睡觉时间
-            3. 想开机自动运行（macOS）：系统设置 → 通用 → 登录项 → 添加 Health Float.app
+            3. 想开机自动运行（macOS）：系统设置 → 通用 → 登录项 → 添加「大水大睡大眺望」
 
             ### 找不到设置？
             点舷窗**右下角的 ⚙ 齿轮**，或**右键舷窗**打开快捷菜单。
