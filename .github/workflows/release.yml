@@ -204,7 +204,7 @@ jobs:
           # push tag 时用触发该次运行的 tag
           tag_name: ${{ github.event.inputs.version != '' && format('v{0}', github.event.inputs.version) || github.ref_name }}
           body: |
-            ## 🌿 大水大睡大健康 — Health Float
+            ## 🌿 大水大睡大眺望 — Health Float
 
             下载对应你系统的版本，**双击即用，不需要装 Python**。
 

@@ -19,7 +19,16 @@ cd "$(dirname "$0")"
 
 BUILD_PY="${HEALTH_FLOAT_BUILD_PYTHON:-python3}"
 OUT="dist"
+# 文件系统名保持 ASCII，界面显示名用中文。
+#
+# 为什么不全用中文：bundle 目录名会一路带进 PyInstaller 的 --name、
+# DMG 卷名、AppImage 目录，中文 exe / 目录名在 Windows 和 Linux 上
+# 有一堆坑（杀软误报、路径编码、appimagetool 对非 ASCII 目录敏感）。
+#
+# 所以分工是：APP_NAME = 磁盘上叫什么（Health Float.app），
+# DISPLAY_NAME = 用户看到什么（Dock / Finder / 窗口列表 = 大水大睡大眺望）。
 APP_NAME="Health Float"
+DISPLAY_NAME="大水大睡大眺望"
 
 echo "==> 检查构建环境"
 # 选解释器的规则（按优先级）：
@@ -250,6 +259,11 @@ fi
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" "$APP/Contents/Info.plist" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VER" "$APP/Contents/Info.plist"
 
+# 中文显示名：Dock / Finder / 窗口列表里显示的是这个，
+# 而不是 CFBundleName（后者是 ASCII 的 "Health Float"）。
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $DISPLAY_NAME" "$APP/Contents/Info.plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string $DISPLAY_NAME" "$APP/Contents/Info.plist"
+
 # 去掉 quarantine 标记（本地构建产物，避免自己被拦）
 xattr -cr "$APP" 2>/dev/null || true
 
@@ -266,7 +280,7 @@ mkdir -p "$DMG_ROOT"
 # 用 ditto 合并会把上一版的旧文件带进 DMG。
 rsync -a --delete "$APP/" "$DMG_ROOT/$APP_NAME.app/"
 ln -sfn /Applications "$DMG_ROOT/Applications"
-hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_ROOT" -ov -format UDZO "$DMG" 2>&1 | tail -1
+hdiutil create -volname "$DISPLAY_NAME" -srcfolder "$DMG_ROOT" -ov -format UDZO "$DMG" 2>&1 | tail -1
 DMG_SIZE=$(du -sh "$DMG" | cut -f1)
 
 echo ""

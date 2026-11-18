@@ -67,7 +67,7 @@ cat > "$APPDIR/healthfloat.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Health Float
-Name[zh_CN]=大水大睡大健康
+Name[zh_CN]=大水大睡大眺望
 Comment=永远置顶的桌面健康小浮窗
 Exec=HealthFloat
 Icon=healthfloat

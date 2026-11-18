@@ -1,4 +1,4 @@
-# 🌿 大水大睡大健康 — Health Float
+# 🌿 大水大睡大眺望 — Health Float
 
 > **大水时代，大睡时代，大眺望时代，大健康时代。**
 
@@ -6,7 +6,7 @@
 总是因为拖延导致晚睡而烦恼吗？
 总是因为久坐而担心吗？
 
-**大水大睡大健康 (Health Float)** 帮助你解决这些问题——
+**大水大睡大眺望 (Health Float)** 帮助你解决这些问题——
 提醒你定时喝水💧，定时遵守 **20-20 原则**👀 保护眼睛，定时起来走一走🧘 避免久坐，
 晚上提醒你早点去洗澡🛁，然后早点能上床睡觉🌙。
 
@@ -18,7 +18,7 @@
 
 ### 📦 直接下载成品（推荐）
 
-**[⬇️ 点这里下载 v1.2.4](https://github.com/Nancihahahahahahah/big-water-big-sleep/releases/tag/v1.2.4)**
+**[⬇️ 点这里下载 v1.2.5](https://github.com/Nancihahahahahahah/big-water-big-sleep/releases/tag/v1.2.5)**
 
 | 系统 | 下载 | 大小 |
 |------|------|------|

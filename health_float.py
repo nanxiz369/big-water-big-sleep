@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-✈️ 大水大睡大健康 — Health Float
+✈️ 大水大睡大眺望 — Health Float
 桌面常驻的「飞机舷窗」小浮窗：
 - 固定尺寸，不缩放不变形；文字精排在舷窗下方灰区
 - 首次启动自动弹出引导，闹钟式上下拨动设置洗澡/睡觉时间
@@ -68,7 +68,7 @@ BASE_DIR = _base_dir()
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 SOUND = "/System/Library/Sounds/Ping.aiff"
 
-VERSION = "1.2.4"
+VERSION = "1.2.5"
 
 
 def _log(msg):
@@ -302,6 +302,27 @@ C_GEAR = "#8792a0"        # 齿轮本体：比次文字还淡一档，
 BUBBLE = (140, 241)          # 常驻泡泡 = 素材图 140x193 + 下方文字条 48
 BUBBLE_IMG = (140, 193)      # 素材图尺寸
 STRIP_H = 48                 # 图下文字条高度（画布灰底，与图四角同色）
+
+# —— 泡泡文字的字号：目标值 + 自适应上限 ——
+# 2026-11-18 用户发截图：「我希望这个字体可以大一点点」。
+#
+# 但放大不是无条件的。泡泡只有 140pt 宽，实测（PingFang SC）：
+#   「看看远方 · 准备一下」12pt → 144pt  ← 冲出画布
+#   「看看远方」                12pt →  63pt  ← 很宽裕
+# 也就是说放大必须配套「按实际宽度降级」，否则最长的那句直接破版。
+#
+# 所以这里的常量是**目标字号**，实际用多少由 _fit_size 按实测宽度往下退，
+# 退到底就是放大前的样子（时间 12 / 名称 10），保证最坏情况不更难看。
+BUBBLE_TIME_SIZE = 14        # 时间行目标字号（「15 分40秒」）
+BUBBLE_NAME_SIZE = 12        # 名称行目标字号（「看看远方」）
+BUBBLE_TIME_MIN = 10         # 时间行下限：低于 12 就跟没放大一样，不如不改
+BUBBLE_NAME_MIN = 10
+BUBBLE_TEXT_PAD = 6          # 文字左右留白
+# 名称行在齿轮**下一行**，横向不打架，可以用到接近画布边缘。
+BUBBLE_NAME_MAX_W = BUBBLE[0] - 2 * BUBBLE_TEXT_PAD          # 128
+# 时间行的字底会和齿轮顶擦到（齿轮本体 x 118.3~127.7、y 212.3~221.7，
+# 时间行字底在 y=214），所以时间行必须比名称行窄。
+BUBBLE_TIME_MAX_W = 94
 
 # —— 提醒卡：一个框 ——
 # 2026-11-13 用户第三次发截图：「这个白色框很丑 … 不单独两个框」。
@@ -626,7 +647,7 @@ class LegacySettingsDialog(tk.Toplevel):
     同样的 collect/_reset 语义）。
     """
 
-    def __init__(self, master, cfg, title="Health Float 设置",
+    def __init__(self, master, cfg, title="大水大睡大眺望 设置",
                  intro="双击浮窗随时能回到这里修改"):
         super().__init__(master)
         self.cfg = cfg
@@ -636,7 +657,7 @@ class LegacySettingsDialog(tk.Toplevel):
         self.resizable(False, False)
         self.transient(master)
 
-        tk.Label(self, text="🌿 大水大睡大健康", font=ui_font(15, True),
+        tk.Label(self, text="🌿 大水大睡大眺望", font=ui_font(15, True),
                  bg="#ffffff", fg=C_TEXT).pack(pady=(16, 2))
         tk.Label(self, text=intro, font=ui_font(9), bg="#ffffff",
                  fg=C_DIM).pack(pady=(0, 10))
@@ -743,7 +764,7 @@ if HAVE_CTK:
         - 拨轮用 CTkEntry + 圆角箭头按钮
         """
 
-        def __init__(self, master, cfg, title="Health Float 设置",
+        def __init__(self, master, cfg, title="大水大睡大眺望 设置",
                      intro="双击浮窗随时能回到这里修改"):
             super().__init__(master)
             self.cfg = cfg
@@ -754,7 +775,7 @@ if HAVE_CTK:
             self.transient(master)
 
             # —— 标题区 ——
-            ctk.CTkLabel(self, text="🌿 大水大睡大健康", font=ui_font(17, True),
+            ctk.CTkLabel(self, text="🌿 大水大睡大眺望", font=ui_font(17, True),
                          text_color=C_TEXT).pack(pady=(18, 2))
             ctk.CTkLabel(self, text=intro, font=ui_font(11),
                          text_color=C_DIM).pack(pady=(0, 12))
@@ -901,7 +922,7 @@ class FloatApp:
         self.next_run = self._build_schedule()
         self.images = self._load_images()
 
-        root.title("Health Float")
+        root.title("大水大睡大眺望")
         root.overrideredirect(True)
         root.attributes("-topmost", True)
         try:
@@ -1051,9 +1072,14 @@ class FloatApp:
             0, 0, text="🌿", font=ui_font(28), fill=C_TEXT, tags=("icon",))
         # 泡泡文字：素材灰区（GRAY_Y 之下）两行，行距舒展
         # 字号比原版放大一档（10/8 → 12/10）：悬窗远看小字吃力。
-        self.time_id = cv.create_text(0, 0, text="", font=ui_font(12, True),
+        # 泡泡文字：字号比上一版放大一档（12/10 → 14/12）。
+        # 这里是目标值，实际字号由 _set_bubble_text 按实测宽度调整
+        # （140pt 宽的泡泡放不下最长的那句，见 BUBBLE_*_MAX_W）。
+        self.time_id = cv.create_text(0, 0, text="",
+                                      font=ui_font(BUBBLE_TIME_SIZE, True),
                                       fill=C_TEXT)
-        self.name_id = cv.create_text(0, 0, text="", font=ui_font(10),
+        self.name_id = cv.create_text(0, 0, text="",
+                                      font=ui_font(BUBBLE_NAME_SIZE),
                                       fill=C_DIM)
         # —— 可见入口：设置齿轮 + 会议模式指示 ——
         # 之前只有隐藏手势（双击/右键），用户根本不知道它们存在。
@@ -1521,25 +1547,54 @@ class FloatApp:
         except (TypeError, ValueError):
             return 0
 
+    def _fit_size(self, text, base, min_size, max_width, bold=False):
+        """从 base 往下退，挑第一个能塞进 max_width 的字号。
+
+        为什么不用固定字号：泡泡只有 140pt 宽，
+        「看看远方 · 准备一下」在 12pt 下要 144pt，会直接冲出画布。
+        固定字号就等于「要么永远 12pt 破版，要么永远 10pt 没放大」。
+
+        实测宽度用的是 tkfont 的 measure —— 必须真的量，
+        因为「数字 + 空格 + 汉字 + 数字」的宽度不能靠字数估。
+        """
+        for size in range(base, min_size - 1, -1):
+            if self._text_width(text, ui_font(size, bold)) <= max_width:
+                return size
+        return min_size
+
+    def _set_bubble_text(self, time_text, name_text):
+        """设置泡泡的两行文字，字号按实测宽度自适应。
+
+        时间行和名称行的可用宽度不一样：
+        名称行在齿轮**下一行**，横向不打架，可以用满；
+        时间行的字底会擦到齿轮顶，得留出避让带。
+        """
+        ts = self._fit_size(time_text, BUBBLE_TIME_SIZE, BUBBLE_TIME_MIN,
+                            BUBBLE_TIME_MAX_W, bold=True)
+        ns = self._fit_size(name_text, BUBBLE_NAME_SIZE, BUBBLE_NAME_MIN,
+                            BUBBLE_NAME_MAX_W)
+        self.cv.itemconfig(self.time_id, text=time_text,
+                           font=ui_font(ts, True))
+        self.cv.itemconfig(self.name_id, text=name_text,
+                           font=ui_font(ns))
+
     def _update_countdown(self):
         if self.current:
             return
         key, left = self._next_event()
         if not key:
-            self.cv.itemconfig(self.time_id, text="🌿")
-            self.cv.itemconfig(self.name_id, text="双击可设置提醒")
+            self._set_bubble_text("🌿", "双击可设置提醒")
             return
         m, s = left // 60, left % 60
         short = f"{m} 分{s:02d}秒" if m else f"{s} 秒"
-        if self.cfg.get("meeting_mode"):
-            short = f"🔇 {short}"          # 会议模式指示
+        # 会议模式**不再**往时间文本里塞 🔇 ——
+        # 泡泡左上角已经有一个橙色静音指示图元了（mute_id，见 _layout_bubble），
+        # 两个 🔇 同时出现是重复，而且 emoji 偏宽会把时间行挤到齿轮上。
         name = ALERT_META[key][0]
         if self.prewarn:
-            self.cv.itemconfig(self.time_id, text=f"{short}后")
-            self.cv.itemconfig(self.name_id, text=f"{name} · 准备一下")
+            self._set_bubble_text(f"{short}后", f"{name} · 准备一下")
         else:
-            self.cv.itemconfig(self.time_id, text=short)
-            self.cv.itemconfig(self.name_id, text=name)
+            self._set_bubble_text(short, name)
 
     def _update_auto_hint(self):
         if self.current == "eye":
